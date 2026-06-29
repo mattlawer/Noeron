@@ -132,9 +132,12 @@ struct OverviewView: View {
     private func typedRow(_ row: Binding<TypedSeed>) -> some View {
         HStack(spacing: 8) {
             Menu {
-                Picker("Type", selection: row.kind) {
-                    ForEach(seedKinds, id: \.self) { k in
-                        Label(k.displayName, systemImage: k.symbolName).tag(k)
+                ForEach(seedKinds, id: \.self) { k in
+                    Button {
+                        row.wrappedValue.kind = k
+                    } label: {
+                        Label(k.displayName, systemImage: k.symbolName)
+                        if row.wrappedValue.kind == k { Image(systemName: "checkmark") }
                     }
                 }
             } label: {

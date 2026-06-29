@@ -88,12 +88,21 @@ struct DorkPlugin: Plugin {
                 for hit in hitList.prefix(4) {
                     guard let link = hit.link, seen.insert(link).inserted, seen.count <= 30 else { continue }
                     let isFile = Self.looksLikeFile(link)
+                    var attrs: [EntityAttribute] = []
+                    if let t = hit.title { attrs.append(.init(key: "Title", value: t, source: "Google Dorks")) }
+                    // Why it matched: the search query + the engine's snippet (the
+                    // context the term appeared in — it may be in cached/older content
+                    // or metadata, not necessarily visible on the live page).
+                    attrs.append(.init(key: "Matched query", value: dork.query, source: "Google Dorks"))
+                    if let s = hit.snippet, !s.isEmpty {
+                        attrs.append(.init(key: "Why matched", value: s, source: "Google Dorks"))
+                    }
                     result.entities.append(.init(
                         kind: isFile ? .document : .url,
                         label: link,
                         subtitle: "Dork: \(dork.label)",
                         confidence: 0.4,
-                        attributes: hit.title.map { [.init(key: "Title", value: $0, source: "Google Dorks")] } ?? [],
+                        attributes: attrs,
                         sourceURL: link,
                         linkKind: .mentions, linkDirection: .toInput
                     ))
@@ -107,15 +116,15 @@ struct DorkPlugin: Plugin {
 
     // MARK: Search providers
 
-    private struct Hit { let title: String?; let link: String? }
+    private struct Hit { let title: String?; let link: String?; let snippet: String? }
 
     private struct SerpResponse: Decodable {
         let organic_results: [Org]?
-        struct Org: Decodable { let title: String?; let link: String? }
+        struct Org: Decodable { let title: String?; let link: String?; let snippet: String? }
     }
     private struct GoogleResponse: Decodable {
         let items: [Item]?
-        struct Item: Decodable { let title: String?; let link: String? }
+        struct Item: Decodable { let title: String?; let link: String?; let snippet: String? }
     }
 
     private static func search(_ query: String, provider: Provider, context: PluginContext) async -> [Hit] {
@@ -125,13 +134,13 @@ struct DorkPlugin: Plugin {
             c.queryItems = [.init(name: "engine", value: "google"), .init(name: "q", value: query),
                             .init(name: "num", value: "10"), .init(name: "api_key", value: key)]
             guard let url = c.url, let resp = try? await context.getJSON(SerpResponse.self, from: url) else { return [] }
-            return (resp.organic_results ?? []).map { Hit(title: $0.title, link: $0.link) }
+            return (resp.organic_results ?? []).map { Hit(title: $0.title, link: $0.link, snippet: $0.snippet) }
         case .google(let key, let cx):
             var c = URLComponents(string: "https://www.googleapis.com/customsearch/v1")!
             c.queryItems = [.init(name: "key", value: key), .init(name: "cx", value: cx),
                             .init(name: "q", value: query), .init(name: "num", value: "10")]
             guard let url = c.url, let resp = try? await context.getJSON(GoogleResponse.self, from: url) else { return [] }
-            return (resp.items ?? []).map { Hit(title: $0.title, link: $0.link) }
+            return (resp.items ?? []).map { Hit(title: $0.title, link: $0.link, snippet: $0.snippet) }
         }
     }
 

@@ -76,12 +76,16 @@ final class DiscoveryEngine: ObservableObject {
         var processedEntities = Set<UUID>()
         var queue: [(Entity, Int)] = seeds.map { ($0, 0) }
 
+        var cappedLogged = false
         while !queue.isEmpty {
-            if investigation.entitiesArray.count >= maxEntities {
-                log("Reached \(maxEntities)-entity cap; stopping expansion.", error: false)
-                break
-            }
             let (entity, depth) = queue.removeFirst()
+            // The entity cap must only stop *deeper* fan-out — never the seeds the
+            // user explicitly asked to process. Otherwise, once the graph hits the
+            // cap, added selectors never expand and "Run all plugins" does nothing.
+            if depth > 0 && investigation.entitiesArray.count >= maxEntities {
+                if !cappedLogged { log("Reached \(maxEntities)-entity cap; not expanding further.", error: false); cappedLogged = true }
+                continue
+            }
             guard processedEntities.insert(entity.id).inserted else { continue }
 
             let snapshot = EntitySnapshot(entity)
