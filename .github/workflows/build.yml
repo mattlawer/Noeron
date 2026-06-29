@@ -29,8 +29,9 @@ jobs:
       - name: Install XcodeGen (latest)
         run: brew install xcodegen || brew upgrade xcodegen
 
+      # NOTE: the repository root *is* the Noeron project folder (project.yml lives
+      # here), so these steps run at the checkout root — no working-directory.
       - name: Generate project
-        working-directory: Noeron
         run: |
           xcodegen --version
           xcodegen generate
@@ -38,7 +39,6 @@ jobs:
       # Build the app *targets* directly (not the schemes, which also build the
       # test bundles — the iOS UI-test runner can demand signing on CI).
       - name: Build macOS
-        working-directory: Noeron
         run: |
           set -o pipefail
           xcodebuild -project Noeron.xcodeproj -target Noeron_macOS -configuration Debug \
@@ -47,7 +47,6 @@ jobs:
             build 2>&1 | tee build-macos.log
 
       - name: Build iOS (Simulator)
-        working-directory: Noeron
         run: |
           set -o pipefail
           xcodebuild -project Noeron.xcodeproj -target Noeron_iOS -configuration Debug \
@@ -56,7 +55,6 @@ jobs:
             build 2>&1 | tee build-ios.log
 
       - name: Unit tests (macOS)
-        working-directory: Noeron
         run: |
           set -o pipefail
           xcodebuild test -project Noeron.xcodeproj -scheme Noeron_macOS \
@@ -70,5 +68,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: Noeron/*.log
+          path: "*.log"
           if-no-files-found: ignore
