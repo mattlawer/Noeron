@@ -88,6 +88,18 @@ A plugin is a small type conforming to `Plugin`: it declares metadata (which ent
 
 A full map of every well‑known OSINT tool and the Noeron plugin that covers it is in **[docs/OSINT-TOOLS.md](docs/OSINT-TOOLS.md)**.
 
+## Download (macOS)
+
+Grab the latest **`Noeron-macOS.zip`** from the [Releases](../../releases) page, unzip it, and move `Noeron.app` to `/Applications`.
+
+The release build is ad‑hoc signed (not notarized), so on first launch macOS will warn it's from an unidentified developer. Either **right‑click the app → Open** once, or clear the download quarantine:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Noeron.app
+```
+
+iOS/iPadOS aren't distributable this way — build and run those from Xcode (below). For a warning‑free macOS download, see [notarization](docs/BUILDING.md#releases).
+
 ## Quick start
 
 **Requirements:** Xcode 16+ (macOS 14 / iOS 17 SDKs), and [XcodeGen](https://github.com/yonaskolb/XcodeGen).

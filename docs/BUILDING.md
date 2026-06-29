@@ -49,6 +49,47 @@ never prompts — the UI reads only a non‑secret index, not the Keychain (see
 `Support/KeychainStore.swift`). Signing with your Developer Team removes the prompt
 entirely.
 
+## Releases
+
+A tag push builds the macOS app and publishes it to a GitHub Release
+(`.github/workflows/release.yml`):
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow generates the project, builds `Noeron_macOS` in Release, ad‑hoc signs
+the app, zips it with `ditto`, and attaches **`Noeron-macOS.zip`** to a Release
+named after the tag (auto‑generated notes). You can also draft a release manually
+in the GitHub UI and upload a zip built locally:
+
+```bash
+xcodebuild -project Noeron.xcodeproj -scheme Noeron_macOS -configuration Release \
+  -derivedDataPath build -destination 'generic/platform=macOS' CODE_SIGNING_ALLOWED=NO build
+codesign --force --deep --sign - build/Build/Products/Release/Noeron.app
+ditto -c -k --keepParent build/Build/Products/Release/Noeron.app Noeron-macOS.zip
+```
+
+### Notarized (warning‑free) downloads — optional
+
+The default release is ad‑hoc signed, so downloaders see a Gatekeeper warning and
+must right‑click → Open (or `xattr -dr com.apple.quarantine`). To distribute
+without the warning you need an **Apple Developer Program** membership and a
+**Developer ID Application** certificate, then in the release workflow:
+
+1. Add repo secrets: the exported `.p12` certificate (base64) + password, and an
+   App Store Connect API key (or an app‑specific password) for notarization.
+2. Import the cert into a temporary keychain, build signed with your Team, then:
+   ```bash
+   xcrun notarytool submit Noeron-macOS.zip --keychain-profile NOERON --wait
+   xcrun stapler staple build/Build/Products/Release/Noeron.app
+   ```
+3. Re‑zip the stapled app and attach it.
+
+This is intentionally not enabled by default since it requires paid Apple
+credentials; the ad‑hoc release works for anyone willing to clear the quarantine.
+
 ## Troubleshooting
 
 | Symptom | Fix |

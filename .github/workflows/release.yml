@@ -1,0 +1,54 @@
+name: release
+
+# Runs when you push a version tag, e.g. `git tag v1.0.0 && git push origin v1.0.0`.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write          # needed to create the GitHub Release
+
+jobs:
+  macos:
+    name: Build & publish macOS app
+    runs-on: macos-15
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen || brew upgrade xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build macOS app (Release)
+        run: |
+          set -o pipefail
+          xcodebuild -project Noeron.xcodeproj -scheme Noeron_macOS -configuration Release \
+            -derivedDataPath build -destination 'generic/platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package
+        run: |
+          APP="build/Build/Products/Release/Noeron.app"
+          # Ad-hoc sign so the app can launch on Apple Silicon (a release that is
+          # Developer-ID signed + notarized would launch with no warning — see README).
+          codesign --force --deep --sign - "$APP"
+          # ditto preserves the bundle's symlinks/metadata (zip -r does not).
+          ditto -c -k --keepParent "$APP" "Noeron-macOS.zip"
+          echo "Built $(du -h Noeron-macOS.zip | cut -f1) archive"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" Noeron-macOS.zip --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" Noeron-macOS.zip \
+              --title "Noeron ${GITHUB_REF_NAME}" --generate-notes
+          fi
