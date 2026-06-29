@@ -1,0 +1,58 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: Build (macOS)
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: sudo xcode-select -s /Applications/Xcode_16.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        working-directory: Noeron
+        run: xcodegen generate
+
+      - name: Test (macOS)
+        working-directory: Noeron
+        run: |
+          xcodebuild test \
+            -project Noeron.xcodeproj \
+            -scheme Noeron_macOS \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Build macOS
+        working-directory: Noeron
+        run: |
+          xcodebuild \
+            -project Noeron.xcodeproj \
+            -scheme Noeron_macOS \
+            -destination 'generic/platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Build iOS (Simulator)
+        working-directory: Noeron
+        run: |
+          xcodebuild \
+            -project Noeron.xcodeproj \
+            -scheme Noeron_iOS \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

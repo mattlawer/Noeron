@@ -1,0 +1,119 @@
+name: Noeron
+options:
+  bundleIdPrefix: com.noeron
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.10"
+    DEVELOPMENT_TEAM: "" # <-- set your Apple Developer Team ID
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_STRICT_CONCURRENCY: targeted
+
+targets:
+  Noeron:
+    type: application
+    platform: [iOS, macOS]
+    deploymentTarget:
+      iOS: "17.0"
+      macOS: "14.0"
+    sources:
+      - path: Noeron
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.noeron.app
+        PRODUCT_NAME: Noeron
+        INFOPLIST_FILE: Noeron/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Noeron/Noeron.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_HARDENED_RUNTIME: YES
+        SUPPORTS_MACCATALYST: NO
+        TARGETED_DEVICE_FAMILY: "1,2" # iPhone + iPad (macOS native via SwiftUI)
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+      configs:
+        debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    entitlements:
+      path: Noeron/Noeron.entitlements
+    info:
+      path: Noeron/Info.plist
+      properties:
+        # Without UILaunchScreen, iOS letterboxes the app (black bars top/bottom).
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+
+  NoeronTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget:
+      macOS: "14.0"
+    sources:
+      - path: NoeronTests
+    dependencies:
+      - target: Noeron_macOS
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.noeron.app.tests
+        SWIFT_VERSION: "5.10"
+
+  NoeronUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget:
+      iOS: "17.0"
+    sources:
+      - path: NoeronUITests
+    dependencies:
+      - target: Noeron_iOS
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.noeron.app.uitests
+        SWIFT_VERSION: "5.10"
+        TEST_TARGET_NAME: Noeron_iOS
+
+# Custom schemes replace the auto-generated ones so the standard scheme names also
+# run the tests: `-scheme Noeron_macOS test` (unit) and `-scheme Noeron_iOS test` (UI).
+schemes:
+  Noeron_macOS:
+    build:
+      targets:
+        Noeron_macOS: all
+        NoeronTests: [test]
+    test:
+      targets:
+        - NoeronTests
+  Noeron_iOS:
+    build:
+      targets:
+        Noeron_iOS: all
+        NoeronUITests: [test]
+    test:
+      targets:
+        - NoeronUITests
+
+# To generate the Xcode project:
+#   brew install xcodegen
+#   cd Noeron && xcodegen generate && open Noeron.xcodeproj
+#
+# Run the unit tests:
+#   xcodebuild test -project Noeron.xcodeproj -scheme Noeron_macOS -destination 'platform=macOS'
