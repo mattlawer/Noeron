@@ -13,56 +13,62 @@ jobs:
   macos:
     name: Build (macOS)
     runs-on: macos-15
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      SIGNING: 'CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Toolchain info
         run: |
-          echo "Xcode: $(xcodebuild -version | tr '\n' ' ')"
-          echo "Swift: $(swift --version | head -1)"
+          xcodebuild -version
+          swift --version
 
-      - name: Install XcodeGen
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"        # skip the brew update that trips on untrusted taps
-          HOMEBREW_NO_INSTALL_CLEANUP: "1"
-        run: |
-          brew untap aws/tap 2>/dev/null || true
-          brew install xcodegen || brew install xcodegen  # one retry for transient bottle hiccups
-          xcodegen --version
+      - name: Install XcodeGen (latest)
+        run: brew install xcodegen || brew upgrade xcodegen
 
       - name: Generate project
         working-directory: Noeron
-        run: xcodegen generate
+        run: |
+          xcodegen --version
+          xcodegen generate
 
+      # Build the app *targets* directly (not the schemes, which also build the
+      # test bundles — the iOS UI-test runner can demand signing on CI).
       - name: Build macOS
         working-directory: Noeron
         run: |
           set -o pipefail
-          xcodebuild \
-            -project Noeron.xcodeproj \
-            -scheme Noeron_macOS \
-            -destination 'platform=macOS' \
+          xcodebuild -project Noeron.xcodeproj -target Noeron_macOS -configuration Debug \
+            -destination 'generic/platform=macOS' \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build
+            build 2>&1 | tee build-macos.log
 
       - name: Build iOS (Simulator)
         working-directory: Noeron
         run: |
           set -o pipefail
-          xcodebuild \
-            -project Noeron.xcodeproj \
-            -scheme Noeron_iOS \
+          xcodebuild -project Noeron.xcodeproj -target Noeron_iOS -configuration Debug \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build
+            build 2>&1 | tee build-ios.log
 
       - name: Unit tests (macOS)
         working-directory: Noeron
         run: |
           set -o pipefail
-          xcodebuild test \
-            -project Noeron.xcodeproj \
-            -scheme Noeron_macOS \
+          xcodebuild test -project Noeron.xcodeproj -scheme Noeron_macOS \
             -destination 'platform=macOS' \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee test-macos.log
+
+      # Capture the exact errors even when a step above fails.
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: Noeron/*.log
+          if-no-files-found: ignore
