@@ -9,6 +9,7 @@
 
 import Foundation
 import CoreGraphics
+import UniformTypeIdentifiers
 
 enum ReportFormat: String, CaseIterable, Identifiable {
     case markdown = "Markdown"
@@ -16,6 +17,13 @@ enum ReportFormat: String, CaseIterable, Identifiable {
     case pdf = "PDF"
     var id: String { rawValue }
     var fileExtension: String { self == .markdown ? "md" : rawValue.lowercased() }
+    var contentType: UTType {
+        switch self {
+        case .markdown: return UTType(filenameExtension: "md") ?? .plainText
+        case .html:     return .html
+        case .pdf:      return .pdf
+        }
+    }
 }
 
 /// Identifiable grouping of entities by kind (avoids tuple key paths in ForEach).

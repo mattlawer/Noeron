@@ -31,12 +31,17 @@ enum ReportExporter {
         }
     }
 
-    /// Writes the report to a temporary file and returns its URL (for share / export).
-    static func writeTemporary(_ investigation: Investigation, format: ReportFormat, options: ReportOptions = .default) throws -> URL {
+    /// Suggested export filename (with extension), shared by save panel and share sheet.
+    static func suggestedFileName(_ investigation: Investigation, format: ReportFormat, options: ReportOptions = .default) -> String {
         let safeTitle = investigation.title.replacingOccurrences(of: "/", with: "-")
         let suffix = options.isSubgraph ? " (subset)" : ""
-        let name = "\(safeTitle)\(suffix).\(format.fileExtension)"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        return "\(safeTitle)\(suffix).\(format.fileExtension)"
+    }
+
+    /// Writes the report to a temporary file and returns its URL (for share / export).
+    static func writeTemporary(_ investigation: Investigation, format: ReportFormat, options: ReportOptions = .default) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(suggestedFileName(investigation, format: format, options: options))
         try data(for: investigation, format: format, options: options).write(to: url, options: .atomic)
         return url
     }

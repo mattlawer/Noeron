@@ -8,6 +8,9 @@
 //
 
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct ReportView: View {
     @Bindable var investigation: Investigation
@@ -58,13 +61,44 @@ struct ReportView: View {
 
             Spacer()
 
-            if let url = exportURL {
-                ShareLink(item: url) { Label("Export", systemImage: "square.and.arrow.up") }
-                    .buttonStyle(.borderedProminent)
-            }
+            exportButton
         }
         .padding(12)
     }
+
+    @ViewBuilder
+    private var exportButton: some View {
+        let disabled = useSubgraph && selectedIDs.isEmpty
+        #if os(macOS)
+        // Native save panel — write straight to a chosen location on disk.
+        Button { saveToDisk() } label: { Label("Save…", systemImage: "square.and.arrow.down") }
+            .buttonStyle(.borderedProminent)
+            .disabled(disabled)
+        #else
+        if let url = exportURL, !disabled {
+            ShareLink(item: url) { Label("Export", systemImage: "square.and.arrow.up") }
+                .buttonStyle(.borderedProminent)
+        }
+        #endif
+    }
+
+    #if os(macOS)
+    private func saveToDisk() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = ReportExporter.suggestedFileName(investigation, format: format, options: options)
+        panel.allowedContentTypes = [format.contentType]
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.title = "Export Report"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try ReportExporter.data(for: investigation, format: format, options: options)
+                .write(to: url, options: .atomic)
+        } catch {
+            exportError = error.localizedDescription
+        }
+    }
+    #endif
 
     private var optionsBar: some View {
         ViewThatFits(in: .horizontal) {
@@ -149,8 +183,11 @@ struct ReportView: View {
 
     private func regenerate() {
         preview = ReportExporter.previewText(for: investigation, format: format, options: options)
+        #if !os(macOS)
+        // The share sheet needs a file URL up-front; macOS writes on demand via the save panel.
         do { exportURL = try ReportExporter.writeTemporary(investigation, format: format, options: options) }
         catch { exportError = error.localizedDescription }
+        #endif
     }
 }
 
