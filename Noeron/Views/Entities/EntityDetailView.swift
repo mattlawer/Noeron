@@ -14,12 +14,14 @@ struct EntityDetailView: View {
     @Bindable var entity: Entity
     @Bindable var investigation: Investigation
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var engine: DiscoveryEngine
     @EnvironmentObject private var registry: PluginRegistry
 
     @State private var runError: RunError?
     @State private var credentialSheet: PluginMetadata?
     @State private var pluginDetail: PluginMetadata?
+    @State private var showMerge = false
 
     /// A failed manual run that the user can fix by entering credentials.
     private struct RunError: Identifiable {
@@ -47,6 +49,7 @@ struct EntityDetailView: View {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 provenanceSection
+                reviewSection
                 if !entity.attributes.isEmpty { attributesSection }
                 if entity.degree > 0 { neighboursSection }
                 if !relatedEvents.isEmpty { eventsSection }
@@ -75,6 +78,31 @@ struct EntityDetailView: View {
         }
         .sheet(item: $pluginDetail) { meta in
             NavigationStack { PluginDetailView(metadata: meta) }
+        }
+        .sheet(isPresented: $showMerge) {
+            NavigationStack {
+                List(mergeCandidates, id: \.id) { candidate in
+                    Button { merge(into: candidate) } label: {
+                        HStack(spacing: 10) {
+                            KindBadge(kind: candidate.kind).scaleEffect(0.8).frame(width: 24, height: 24)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(candidate.label).fontWeight(.medium)
+                                if !candidate.subtitle.isEmpty {
+                                    Text(candidate.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                            }
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                .navigationTitle("Merge “\(entity.label)” into…")
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+                #endif
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showMerge = false } } }
+            }
+            .macWindowFrame(minWidth: 380, minHeight: 420)
         }
     }
 
@@ -141,10 +169,10 @@ struct EntityDetailView: View {
     private struct LinkRow: Identifiable { let id: UUID; let label: String; let other: Entity; let directionSymbol: String }
     private var linkRows: [LinkRow] {
         var rows: [LinkRow] = []
-        for link in entity.outgoing { if let t = link.target {
+        for link in entity.outgoing { if let t = link.target, !t.discarded {
             rows.append(.init(id: link.id, label: link.label, other: t, directionSymbol: "arrow.right"))
         } }
-        for link in entity.incoming { if let s = link.source {
+        for link in entity.incoming { if let s = link.source, !s.discarded {
             rows.append(.init(id: link.id, label: link.label, other: s, directionSymbol: "arrow.left"))
         } }
         return rows
@@ -281,6 +309,70 @@ struct EntityDetailView: View {
                 runError = RunError(plugin: meta, message: "\(meta.name): \(last)")
             }
         }
+    }
+
+    // MARK: Analyst review — adjust confidence or discard a false positive
+
+    private var reviewSection: some View {
+        SectionCard(title: "Analyst review", systemImage: "checkmark.seal") {
+            HStack {
+                Text("Confidence").foregroundStyle(.secondary)
+                Spacer()
+                Text("\(Int(entity.confidence * 100))%")
+                    .font(.subheadline.monospacedDigit().weight(.medium))
+                    .foregroundStyle(Theme.confidenceColor(entity.confidence))
+            }
+            Slider(
+                value: Binding(
+                    get: { entity.confidence },
+                    set: { entity.confidence = $0; entity.updatedAt = Date(); try? modelContext.save() }
+                ),
+                in: 0...1, step: 0.05
+            )
+            .tint(Theme.confidenceColor(entity.confidence))
+
+            HStack(spacing: 8) {
+                Button(role: .destructive) { discard() } label: {
+                    Label("Discard", systemImage: "trash")
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                if !mergeCandidates.isEmpty {
+                    Button { showMerge = true } label: {
+                        Label("Merge into…", systemImage: "arrow.triangle.merge")
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                }
+            }
+            .padding(.top, 2)
+            Text("Discard hides this false positive and stops discovery re-adding it. Merge folds it into another \(entity.kind.displayName.lowercased()), moving its links and facts.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .font(.subheadline)
+    }
+
+    /// Same-kind entities this one could be merged into.
+    private var mergeCandidates: [Entity] {
+        investigation.entitiesArray
+            .filter { $0.kind == entity.kind && $0.id != entity.id }
+            .sorted { $0.label < $1.label }
+    }
+
+    private func merge(into target: Entity) {
+        showMerge = false
+        let src = entity
+        dismiss()   // leave the page before the source is deleted
+        DispatchQueue.main.async {
+            EntityMerge.merge(src, into: target, in: investigation, context: modelContext)
+        }
+    }
+
+    /// Mark the entity as a discarded false positive (hidden everywhere and skipped
+    /// by future discovery), then leave the page. Reversible: it's flagged, not deleted.
+    private func discard() {
+        entity.discarded = true
+        entity.updatedAt = Date()
+        try? modelContext.save()
+        dismiss()
     }
 
     @ViewBuilder

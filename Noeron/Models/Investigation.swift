@@ -66,7 +66,11 @@ final class Investigation {
 // MARK: - Convenience
 
 extension Investigation {
-    var entitiesArray: [Entity] { entities ?? [] }
+    /// Visible entities (discarded false positives are hidden everywhere).
+    var entitiesArray: [Entity] { (entities ?? []).filter { !$0.discarded } }
+    /// Every entity including discarded ones — used by discovery to skip them.
+    var allEntitiesArray: [Entity] { entities ?? [] }
+    var discardedEntities: [Entity] { (entities ?? []).filter { $0.discarded } }
     var linksArray: [EntityLink] { links ?? [] }
     var notesArray: [NoteItem] { notes ?? [] }
     var evidenceArray: [EvidenceItem] { evidence ?? [] }

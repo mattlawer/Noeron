@@ -33,6 +33,17 @@ final class DiscoveryEngine: ObservableObject {
     @Published var liveLog: [LogLine] = []
     @Published var lastError: String?
 
+    /// Set by `cancel()`; the BFS loop checks it between entities to stop early.
+    private var cancelRequested = false
+
+    /// Request that the in-progress discovery stop as soon as the current plugin
+    /// batch finishes. Safe to call from the UI.
+    func cancel() {
+        guard isRunning else { return }
+        cancelRequested = true
+        statusText = "Cancelling…"
+    }
+
     /// Tunable scope guards (exposed in Settings).
     @Published var maxDepth = 2
     @Published var maxEntities = 50
@@ -72,13 +83,17 @@ final class DiscoveryEngine: ObservableObject {
         var index = buildIndex(investigation)
         var linkKeys = buildLinkKeys(investigation)
         var eventKeys = buildEventKeys(investigation)
+        // Labels the analyst discarded as false positives — never re-create them.
+        let discardedKeys = Set(investigation.discardedEntities.map { $0.dedupeKey })
         var visitedPairs = Set<String>()       // "entityID|pluginID"
         var processedEntities = Set<UUID>()
-        var queue: [(Entity, Int)] = seeds.map { ($0, 0) }
+        var queue: [(Entity, Int)] = seeds.filter { !$0.discarded }.map { ($0, 0) }
 
         var cappedLogged = false
         while !queue.isEmpty {
+            if cancelRequested { log("Discovery cancelled.", error: false); break }
             let (entity, depth) = queue.removeFirst()
+            if entity.discarded { continue }
             // The entity cap must only stop *deeper* fan-out — never the seeds the
             // user explicitly asked to process. Otherwise, once the graph hits the
             // cap, added selectors never expand and "Run all plugins" does nothing.
@@ -112,7 +127,8 @@ final class DiscoveryEngine: ObservableObject {
                                     modelContext: modelContext,
                                     index: &index,
                                     linkKeys: &linkKeys,
-                                    eventKeys: &eventKeys)
+                                    eventKeys: &eventKeys,
+                                    discardedKeys: discardedKeys)
                 if !created.isEmpty {
                     discovered += created.count
                     log("\(outcome.pluginName): +\(created.count) on \(entity.label)", error: false)
@@ -144,6 +160,7 @@ final class DiscoveryEngine: ObservableObject {
         var index = buildIndex(investigation)
         var linkKeys = buildLinkKeys(investigation)
         var eventKeys = buildEventKeys(investigation)
+        let discardedKeys = Set(investigation.discardedEntities.map { $0.dedupeKey })
         let snapshot = EntitySnapshot(entity)
         statusText = "Running \(plugin.metadata.name) on \(entity.label)"
 
@@ -156,7 +173,8 @@ final class DiscoveryEngine: ObservableObject {
             }
             let created = apply(result, pluginID: outcome.pluginID, pluginName: outcome.pluginName,
                                 to: entity, in: investigation, modelContext: modelContext,
-                                index: &index, linkKeys: &linkKeys, eventKeys: &eventKeys)
+                                index: &index, linkKeys: &linkKeys, eventKeys: &eventKeys,
+                                discardedKeys: discardedKeys)
             discovered += created.count
             log("\(outcome.pluginName): +\(created.count)", error: false)
         }
@@ -203,7 +221,8 @@ final class DiscoveryEngine: ObservableObject {
                        modelContext: ModelContext,
                        index: inout [String: Entity],
                        linkKeys: inout Set<String>,
-                       eventKeys: inout Set<String>) -> [Entity] {
+                       eventKeys: inout Set<String>,
+                       discardedKeys: Set<String>) -> [Entity] {
 
         // 1. Facts onto the input node.
         for attr in result.inputAttributes {
@@ -217,6 +236,8 @@ final class DiscoveryEngine: ObservableObject {
             let label = Normalizer.label(for: discovery.kind, discovery.label)
             guard !label.isEmpty else { continue }
             let key = "\(discovery.kind.rawValue)|\(label.lowercased())"
+            // Never resurrect a label the analyst discarded as a false positive.
+            if discardedKeys.contains(key) { continue }
 
             let node: Entity
             if let existing = index[key] {
@@ -361,7 +382,7 @@ final class DiscoveryEngine: ObservableObject {
     }
 
     private func beginRun(label: String) {
-        isRunning = true; lastError = nil; processed = 0; discovered = 0
+        isRunning = true; cancelRequested = false; lastError = nil; processed = 0; discovered = 0
         liveLog = [LogLine(text: "Starting discovery from “\(label)”…", isError: false)]
     }
     private func endRun() { isRunning = false }

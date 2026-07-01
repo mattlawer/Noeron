@@ -78,6 +78,12 @@ struct DiscoveryProgressView: View {
             Spacer()
             Text("\(engine.processed) processed · \(engine.discovered) found")
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            if engine.isRunning {
+                Button(role: .destructive) { engine.cancel() } label: {
+                    Label("Stop", systemImage: "stop.circle.fill")
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+            }
         }
     }
 

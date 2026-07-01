@@ -42,6 +42,9 @@ final class Entity {
     var confidence: Double = 1.0
     var pinned: Bool = false
     var isSeed: Bool = false
+    /// Analyst discarded this as a false positive: hidden from the graph/lists and
+    /// skipped by discovery so re-running never resurrects it.
+    var discarded: Bool = false
 
     /// Persisted graph-canvas position so layouts survive sync.
     var canvasX: Double = 0

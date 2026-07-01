@@ -192,10 +192,32 @@ struct PluginContext: @unchecked Sendable {
     }
 }
 
+// MARK: - Per-host request throttle
+
+/// Serialises requests to each host with a minimum spacing, shared across all
+/// concurrently-running plugins. Prevents public endpoints (HackerTarget, urlscan,
+/// EmailRep, crt.sh, …) from rate-limiting a broad fan-out.
+actor HostThrottle {
+    static let shared = HostThrottle()
+    private var nextSlot: [String: ContinuousClock.Instant] = [:]
+
+    func reserve(host: String, minInterval: Duration) async {
+        guard !host.isEmpty, minInterval > .zero else { return }
+        let now = ContinuousClock.now
+        let slot = max(now, nextSlot[host] ?? now)
+        nextSlot[host] = slot.advanced(by: minInterval)
+        let wait = now.duration(to: slot)
+        if wait > .zero { try? await Task.sleep(for: wait) }
+    }
+}
+
 // MARK: - Networking helpers
 
 extension PluginContext {
     func get(_ url: URL, headers: [String: String] = [:], timeout: TimeInterval = 15) async throws -> (Data, HTTPURLResponse) {
+        // Space out requests to the same host so we don't hammer public endpoints
+        // into rate limits (429s). Different hosts are not throttled against each other.
+        await HostThrottle.shared.reserve(host: url.host ?? "", minInterval: politenessDelay)
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.setValue("Noeron/1.0 (OSINT workspace)", forHTTPHeaderField: "User-Agent")
         headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }

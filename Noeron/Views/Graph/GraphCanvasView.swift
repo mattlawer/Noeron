@@ -130,6 +130,9 @@ struct GraphCanvasView: View {
                     .disabled(engine.isRunning)
                 NavigationLink(value: entity) { Label("Open", systemImage: "arrow.up.right.square") }
                     .buttonStyle(.bordered).controlSize(.small)
+                Button(role: .destructive) { discard(entity) } label: { Image(systemName: "trash") }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .help("Discard as false positive")
                 Button { withAnimation { selectedID = nil } } label: { Image(systemName: "xmark") }
                     .buttonStyle(.bordered).controlSize(.small)
             }
@@ -252,6 +255,17 @@ struct GraphCanvasView: View {
                          height: (canvasCenter.y - center.y) * target)
             dragPanStart = pan
         }
+    }
+
+    /// Discard a node as a false positive: flag it (hidden + skipped by discovery),
+    /// don't delete, so it stays reversible and isn't rediscovered.
+    private func discard(_ entity: Entity) {
+        withAnimation { selectedID = nil }
+        positions[entity.id] = nil
+        dragStart[entity.id] = nil
+        entity.discarded = true
+        entity.updatedAt = Date()
+        try? modelContext.save()
     }
 
     private func randomStart() -> CGPoint {
