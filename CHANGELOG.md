@@ -3,7 +3,33 @@
 All notable changes to Noeron are documented here. This project aims to follow
 [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [1.0.1] - 2026-07-01
+
+### Added
+- **Graph search & filters**: a search-to-focus field (centres and highlights
+  matches), a min-confidence slider, and a tappable kind legend with per-kind
+  counts to hide/show node kinds — essential once a graph passes ~50 nodes.
+- **Undo for discard**: discarding an entity now shows a brief "Undo" toast that
+  restores it (auto-dismisses after a few seconds).
+- **First-run onboarding**: a dismissible "Getting started" hint on the Overview
+  explaining paste-a-selector → Discover (persisted once dismissed).
+- **Selected-subgraph report export**: scope a report to chosen entities; links
+  and timeline events are induced by the included set. Reports embed confidence
+  (text meter / HTML bar / PDF meter) and discard state (flagged, dimmed).
+- Discovery **cancel/stop**, real per-host **rate limiting**, **sticky discards**
+  (reversible, not re-discovered), and manual **entity merge**.
+
+### Changed
+- macOS report export now opens a native **Save panel** (write to disk) instead
+  of the share sheet; iOS keeps the share sheet.
+- Default discovery depth 2 / entity cap 50; clearer Google Dork match context.
+
+### Fixed
+- Graph selection inspector no longer clips or drifts off-screen at some window
+  sizes — it's now a bounded, centred floating card anchored to the viewport.
+- Selector type menu and multi-selector entity-cap expansion.
+
+## [1.0.0] - 2026-06-29
 
 ### Added
 - On-chain plugins (keyless): Bitcoin, Ethereum and Solana — balance, USD estimate,
