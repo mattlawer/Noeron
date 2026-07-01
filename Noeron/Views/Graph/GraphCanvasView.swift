@@ -56,30 +56,26 @@ struct GraphCanvasView: View {
 
     var body: some View {
         GeometryReader { geo in
+            // The pannable/zoomable canvas. Its child is 1800×1300, so it must be
+            // clipped to the viewport. HUD overlays (inspector, banners, controls)
+            // are attached *outside* this ZStack via .overlay so they position
+            // against the viewport — not the giant canvas — and never get clipped.
             ZStack {
                 Theme.canvasBackground.ignoresSafeArea()
-
                 graphLayer
                     .frame(width: canvasSize.width, height: canvasSize.height)
                     .scaleEffect(scale)
                     .offset(pan)
                     .coordinateSpace(name: "graph")
-
-                if entities.isEmpty { emptyState }
-                if let id = selectedID, let entity = entities.first(where: { $0.id == id }) {
-                    selectionInspector(entity).transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-                if engine.isRunning { runningBanner }
-                if showControls { VStack { controlsPanel; Spacer() } }
             }
-            // Fill the GeometryReader and centre children. Without this the ZStack
-            // shrinks to the 1800×1300 canvas and anchors top-left, pushing the
-            // (centre-anchored) fit transform entirely off-screen → blank graph.
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
             .contentShape(Rectangle())
             .gesture(panGesture)
             .simultaneousGesture(zoomGesture)
+            .overlay { if entities.isEmpty { emptyState } }
+            .overlay(alignment: .top) { topHUD }
+            .overlay(alignment: .bottom) { bottomHUD }
             .onAppear {
                 viewportSize = geo.size
                 ensureLayout()
@@ -93,6 +89,24 @@ struct GraphCanvasView: View {
         }
         .navigationTitle("Graph")
         .toolbar { graphToolbar }
+    }
+
+    /// Top-anchored HUD: running status and the search/filter panel.
+    @ViewBuilder private var topHUD: some View {
+        VStack(spacing: 8) {
+            if engine.isRunning { runningBanner }
+            if showControls { controlsPanel }
+        }
+        .padding(.top, 10)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Bottom-anchored HUD: the selected-entity inspector.
+    @ViewBuilder private var bottomHUD: some View {
+        if let id = selectedID, let entity = entities.first(where: { $0.id == id }) {
+            selectionInspector(entity)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
     }
 
     // MARK: Layers
@@ -146,45 +160,69 @@ struct GraphCanvasView: View {
     }
 
     private func selectionInspector(_ entity: Entity) -> some View {
-        VStack {
-            Spacer()
-            HStack(spacing: 12) {
-                KindBadge(kind: entity.kind)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(entity.label).font(.headline).lineLimit(1)
-                    Text("\(entity.kind.displayName) · \(entity.degree) links").font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button {
-                    Task { await engine.expand(seed: entity, in: investigation, modelContext: modelContext) }
-                } label: { Label("Expand", systemImage: "point.3.connected.trianglepath.dotted") }
-                    .buttonStyle(.borderedProminent).controlSize(.small)
-                    .disabled(engine.isRunning)
-                NavigationLink(value: entity) { Label("Open", systemImage: "arrow.up.right.square") }
-                    .buttonStyle(.bordered).controlSize(.small)
-                Button(role: .destructive) { discard(entity) } label: { Image(systemName: "trash") }
-                    .buttonStyle(.bordered).controlSize(.small)
-                    .help("Discard as false positive")
-                Button { withAnimation { selectedID = nil } } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.bordered).controlSize(.small)
+        HStack(spacing: 10) {
+            KindBadge(kind: entity.kind)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entity.label)
+                    .font(.headline).lineLimit(1).truncationMode(.middle)
+                Text("\(entity.kind.displayName) · \(entity.degree) links")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            .padding(12)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-            .padding(16)
+            .frame(minWidth: 0, alignment: .leading)
+            Spacer(minLength: 8)
+            // Full labels when there's room; collapse to icons when the window is narrow.
+            ViewThatFits(in: .horizontal) {
+                inspectorActions(entity, labeled: true)
+                inspectorActions(entity, labeled: false)
+            }
+            .fixedSize()
+        }
+        .padding(12)
+        .frame(maxWidth: 560)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.08)))
+        .shadow(radius: 6, y: 2)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
+    }
+
+    @ViewBuilder
+    private func inspectorActions(_ entity: Entity, labeled: Bool) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                Task { await engine.expand(seed: entity, in: investigation, modelContext: modelContext) }
+            } label: {
+                if labeled { Label("Expand", systemImage: "point.3.connected.trianglepath.dotted") }
+                else { Image(systemName: "point.3.connected.trianglepath.dotted") }
+            }
+            .buttonStyle(.borderedProminent).controlSize(.small)
+            .disabled(engine.isRunning)
+            .help("Expand from this entity")
+
+            NavigationLink(value: entity) {
+                if labeled { Label("Open", systemImage: "arrow.up.right.square") }
+                else { Image(systemName: "arrow.up.right.square") }
+            }
+            .buttonStyle(.bordered).controlSize(.small)
+            .help("Open entity details")
+
+            Button(role: .destructive) { discard(entity) } label: { Image(systemName: "trash") }
+                .buttonStyle(.bordered).controlSize(.small)
+                .help("Discard as false positive")
+            Button { withAnimation { selectedID = nil } } label: { Image(systemName: "xmark") }
+                .buttonStyle(.bordered).controlSize(.small)
+                .help("Close")
         }
     }
 
     private var runningBanner: some View {
-        VStack {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(engine.statusText).font(.caption).lineLimit(1)
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(.regularMaterial, in: Capsule())
-            .padding(.top, 10)
-            Spacer()
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(engine.statusText).font(.caption).lineLimit(1)
         }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.regularMaterial, in: Capsule())
     }
 
     // MARK: Search & filter panel
