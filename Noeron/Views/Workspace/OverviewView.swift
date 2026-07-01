@@ -19,6 +19,7 @@ struct OverviewView: View {
     @State private var seedText = ""
     @State private var typedRows: [TypedSeed] = [TypedSeed()]
     @State private var showAddEntity = false
+    @AppStorage("noeron.onboardingDismissed") private var onboardingDismissed = false
 
     private let columns = [GridItem(.adaptive(minimum: 130), spacing: 12)]
 
@@ -36,6 +37,7 @@ struct OverviewView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                if !onboardingDismissed { onboardingBanner }
                 discoveryCard
                 DiscoveryProgressView()
                 statsGrid
@@ -52,6 +54,27 @@ struct OverviewView: View {
         .sheet(isPresented: $showAddEntity) {
             AddEntitySheet(investigation: investigation)
         }
+    }
+
+    // MARK: Onboarding
+
+    private var onboardingBanner: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "sparkles").font(.title3).foregroundStyle(Theme.accent)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Getting started").font(.subheadline.weight(.semibold))
+                Text("Type or paste a selector — an email, domain, @username, IP or wallet — then tap **Discover**. Noeron runs its keyless plugins and builds the graph automatically. Tap any node to dig deeper, run more plugins, or discard false positives.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Button { withAnimation { onboardingDismissed = true } } label: {
+                Image(systemName: "xmark").font(.caption)
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.accent.opacity(0.10)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.accent.opacity(0.30)))
     }
 
     // MARK: Discovery card

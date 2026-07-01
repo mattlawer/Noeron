@@ -13,6 +13,7 @@ struct GraphCanvasView: View {
     @Bindable var investigation: Investigation
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var engine: DiscoveryEngine
+    @EnvironmentObject private var appState: AppState
 
     @State private var positions: [UUID: CGPoint] = [:]
     @State private var scale: CGFloat = 1
@@ -21,6 +22,11 @@ struct GraphCanvasView: View {
     @State private var selectedID: UUID?
     @State private var didLayout = false
     @State private var viewportSize: CGSize = .zero
+    // Search & filters
+    @State private var query = ""
+    @State private var minConfidence: Double = 0
+    @State private var hiddenKinds: Set<EntityKind> = []
+    @State private var showControls = false
 
     private let canvasSize = CGSize(width: 1800, height: 1300)
     private let minScale: CGFloat = 0.15
@@ -28,6 +34,25 @@ struct GraphCanvasView: View {
 
     private var entities: [Entity] { investigation.entitiesArray }
     private var links: [EntityLink] { investigation.linksArray }
+
+    /// Entities passing the kind + confidence filters (search only dims, not hides).
+    private var visibleEntities: [Entity] {
+        entities.filter { !hiddenKinds.contains($0.kind) && $0.confidence >= minConfidence - 0.001 }
+    }
+    private var visibleIDs: Set<UUID> { Set(visibleEntities.map(\.id)) }
+    private func matchesSearch(_ e: Entity) -> Bool {
+        query.isEmpty || e.label.localizedCaseInsensitiveContains(query)
+    }
+    private func matchesSearchID(_ id: UUID) -> Bool {
+        query.isEmpty || (entities.first { $0.id == id }.map(matchesSearch) ?? true)
+    }
+    /// Kinds present in the graph, in sidebar order, with their counts.
+    private var presentKinds: [(kind: EntityKind, count: Int)] {
+        EntityKind.sidebarOrder.compactMap { k in
+            let c = entities.filter { $0.kind == k }.count
+            return c > 0 ? (k, c) : nil
+        }
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -45,6 +70,7 @@ struct GraphCanvasView: View {
                     selectionInspector(entity).transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 if engine.isRunning { runningBanner }
+                if showControls { VStack { controlsPanel; Spacer() } }
             }
             // Fill the GeometryReader and centre children. Without this the ZStack
             // shrinks to the 1800×1300 canvas and anchors top-left, pushing the
@@ -63,6 +89,7 @@ struct GraphCanvasView: View {
                 if !didLayout { ensureLayout() }
             }
             .onChange(of: entities.count) { _, _ in ensureLayout(force: true) }
+            .onChange(of: query) { _, _ in focusFirstMatch() }
         }
         .navigationTitle("Graph")
         .toolbar { graphToolbar }
@@ -76,12 +103,16 @@ struct GraphCanvasView: View {
                 // Edges live in the zoomed canvas, so divide widths by the zoom to
                 // keep a constant, visible on-screen thickness (like the nodes).
                 let base = 2.4 / scale
+                let vis = visibleIDs
                 for link in links {
                     guard let s = link.source?.id, let t = link.target?.id,
+                          vis.contains(s), vis.contains(t),
                           let a = positions[s], let b = positions[t] else { continue }
                     var path = Path(); path.move(to: a); path.addLine(to: b)
                     let highlighted = selectedID == s || selectedID == t
-                    ctx.stroke(path, with: .color(.white.opacity(highlighted ? 0.85 : 0.40)),
+                    let dim = !query.isEmpty && !matchesSearchID(s) && !matchesSearchID(t)
+                    let opacity = dim ? 0.08 : (highlighted ? 0.85 : 0.40)
+                    ctx.stroke(path, with: .color(.white.opacity(opacity)),
                                lineWidth: highlighted ? base * 1.8 : base)
                     // Midpoint label for highlighted edges
                     if highlighted {
@@ -91,12 +122,13 @@ struct GraphCanvasView: View {
                     }
                 }
             }
-            ForEach(entities) { entity in
+            ForEach(visibleEntities) { entity in
                 NodeView(entity: entity, selected: selectedID == entity.id)
                     // Counter-scale so nodes & labels keep a constant, readable
                     // on-screen size at any zoom (the parent scaleEffect would
                     // otherwise shrink them into illegibility when fitted).
                     .scaleEffect(1.0 / scale)
+                    .opacity(matchesSearch(entity) ? 1 : 0.16)
                     .position(positions[entity.id] ?? randomStart())
                     .highPriorityGesture(nodeDrag(entity))
                     .onTapGesture { withAnimation(.spring(duration: 0.25)) { selectedID = entity.id } }
@@ -155,9 +187,79 @@ struct GraphCanvasView: View {
         }
     }
 
+    // MARK: Search & filter panel
+
+    private var controlsPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search nodes", text: $query)
+                    .textFieldStyle(.plain)
+                    #if os(iOS)
+                    .autocorrectionDisabled().textInputAutocapitalization(.never)
+                    #endif
+                if !query.isEmpty {
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                        .buttonStyle(.plain)
+                }
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.panel.opacity(0.6)))
+
+            HStack(spacing: 8) {
+                Text("Min confidence").font(.caption).foregroundStyle(.secondary)
+                Slider(value: $minConfidence, in: 0...1)
+                Text("\(Int(minConfidence * 100))%").font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary).frame(width: 42, alignment: .trailing)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(presentKinds, id: \.kind) { item in
+                        let on = !hiddenKinds.contains(item.kind)
+                        Button {
+                            if on { hiddenKinds.insert(item.kind) } else { hiddenKinds.remove(item.kind) }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: item.kind.symbolName).font(.caption2)
+                                Text("\(item.kind.displayName) \(item.count)").font(.caption2)
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Capsule().fill(item.kind.color.opacity(on ? 0.9 : 0.16)))
+                            .foregroundStyle(on ? .white : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: 540)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .shadow(radius: 6, y: 2)
+        .padding(10)
+    }
+
+    /// Centre and select the first node whose label matches the search.
+    private func focusFirstMatch() {
+        guard !query.isEmpty,
+              let first = visibleEntities.first(where: matchesSearch),
+              let p = positions[first.id] else { return }
+        let canvasCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+        withAnimation(.easeInOut(duration: 0.35)) {
+            selectedID = first.id
+            pan = CGSize(width: (canvasCenter.x - p.x) * scale, height: (canvasCenter.y - p.y) * scale)
+            dragPanStart = pan
+        }
+    }
+
     @ToolbarContentBuilder
     private var graphToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
+            Button { withAnimation { showControls.toggle() } } label: {
+                Label("Search & filter", systemImage: hiddenKinds.isEmpty && minConfidence == 0 && query.isEmpty
+                      ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+            }
             Button { relayout() } label: { Label("Re-layout", systemImage: "wand.and.rays") }
             Button { fitToContent() } label: { Label("Fit", systemImage: "arrow.up.left.and.down.right.magnifyingglass") }
         }
@@ -266,6 +368,7 @@ struct GraphCanvasView: View {
         entity.discarded = true
         entity.updatedAt = Date()
         try? modelContext.save()
+        appState.noteDiscard(entity)
     }
 
     private func randomStart() -> CGPoint {

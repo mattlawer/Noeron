@@ -77,7 +77,15 @@ final class AppState: ObservableObject {
     @Published var showingNewInvestigation = false
     @Published var showingSettings = false
 
+    /// The most recently discarded entity, surfaced as an "Undo" toast.
+    @Published var lastDiscarded: Entity?
+
     func open(_ link: DeepLink) {
         pendingDeepLink = link
+    }
+
+    /// Record a discard so the UI can offer a brief Undo.
+    func noteDiscard(_ entity: Entity) {
+        lastDiscarded = entity
     }
 }

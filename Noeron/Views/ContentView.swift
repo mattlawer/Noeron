@@ -47,6 +47,7 @@ struct ContentView: View {
                 WelcomeView()
             }
         }
+        .overlay(alignment: .bottom) { undoToast }
         .sheet(isPresented: $appState.showingNewInvestigation) {
             NewInvestigationSheet { newID in
                 appState.selectedInvestigationID = newID
@@ -89,6 +90,38 @@ struct ContentView: View {
         guard let investigation = selectedInvestigation,
               dedupedInvestigationIDs.insert(investigation.id).inserted else { return }
         DiscoveryEngine.dedupeTimeline(investigation, modelContext: modelContext)
+    }
+
+    // MARK: Undo toast for discards
+
+    @ViewBuilder
+    private var undoToast: some View {
+        if let e = appState.lastDiscarded {
+            HStack(spacing: 12) {
+                Image(systemName: "trash").foregroundStyle(.secondary)
+                Text("Discarded “\(e.label)”").lineLimit(1)
+                Button("Undo") { undoDiscard(e) }.fontWeight(.semibold)
+                Button { withAnimation { appState.lastDiscarded = nil } } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+            }
+            .font(.subheadline)
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .background(.regularMaterial, in: Capsule())
+            .shadow(radius: 5, y: 2)
+            .padding(.bottom, 24)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .task(id: e.id) {
+                try? await Task.sleep(for: .seconds(6))
+                if appState.lastDiscarded?.id == e.id { withAnimation { appState.lastDiscarded = nil } }
+            }
+        }
+    }
+
+    private func undoDiscard(_ e: Entity) {
+        e.discarded = false
+        e.updatedAt = Date()
+        try? modelContext.save()
+        withAnimation { appState.lastDiscarded = nil }
     }
 
     private func resolve(_ link: DeepLink) {

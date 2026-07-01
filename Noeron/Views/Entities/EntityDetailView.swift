@@ -17,6 +17,7 @@ struct EntityDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var engine: DiscoveryEngine
     @EnvironmentObject private var registry: PluginRegistry
+    @EnvironmentObject private var appState: AppState
 
     @State private var runError: RunError?
     @State private var credentialSheet: PluginMetadata?
@@ -372,6 +373,7 @@ struct EntityDetailView: View {
         entity.discarded = true
         entity.updatedAt = Date()
         try? modelContext.save()
+        appState.noteDiscard(entity)
         dismiss()
     }
 
