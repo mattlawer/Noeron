@@ -25,6 +25,25 @@ struct EntityKindGroup: Identifiable {
     var id: String { kind.rawValue }
 }
 
+/// What to include when building a report.
+struct ReportOptions: Equatable {
+    enum Scope: Equatable {
+        case all
+        /// Only the named entities and the links induced between them.
+        case subgraph(Set<UUID>)
+    }
+
+    var scope: Scope = .all
+    /// Include discarded (false-positive) entities, flagged as such.
+    var includeDiscarded: Bool = false
+    /// Drop non-discarded entities below this confidence (0 = keep everything).
+    var minConfidence: Double = 0
+
+    static let `default` = ReportOptions()
+
+    var isSubgraph: Bool { if case .subgraph = scope { return true }; return false }
+}
+
 /// Snapshot of everything that goes into a report, captured on the main actor.
 struct ReportModel {
     let title: String
@@ -32,6 +51,7 @@ struct ReportModel {
     let classification: String
     let summary: String
     let generated: Date
+    let options: ReportOptions
     let entityGroups: [EntityKindGroup]
     let links: [EntityLink]
     let events: [TimelineEvent]
@@ -40,31 +60,89 @@ struct ReportModel {
     let nodePositions: [(id: UUID, point: CGPoint, kind: EntityKind, label: String)]
 
     @MainActor
-    init(_ investigation: Investigation) {
+    init(_ investigation: Investigation, options: ReportOptions = .default) {
+        self.options = options
         title = investigation.title
         caseNumber = investigation.caseNumber
         classification = investigation.classification
         summary = investigation.summary
         generated = Date()
-        entityGroups = investigation.populatedKinds.map { EntityKindGroup(kind: $0, entities: investigation.entities(of: $0)) }
-        links = investigation.linksArray
-        events = investigation.eventsArray
+
+        // Resolve the included entity set from scope + discard + confidence filters.
+        var pool = investigation.allEntitiesArray
+        if case .subgraph(let ids) = options.scope { pool = pool.filter { ids.contains($0.id) } }
+        if !options.includeDiscarded { pool = pool.filter { !$0.discarded } }
+        if options.minConfidence > 0 {
+            // Keep discarded regardless — when shown, they carry their own flag.
+            pool = pool.filter { $0.discarded || $0.confidence >= options.minConfidence }
+        }
+        let includedIDs = Set(pool.map { $0.id })
+
+        let byKind = Dictionary(grouping: pool, by: { $0.kind })
+        entityGroups = EntityKind.sidebarOrder.compactMap { kind in
+            guard let members = byKind[kind], !members.isEmpty else { return nil }
+            let sorted = members.sorted { a, b in
+                if a.discarded != b.discarded { return !a.discarded }   // active first
+                return a.label.localizedCaseInsensitiveCompare(b.label) == .orderedAscending
+            }
+            return EntityKindGroup(kind: kind, entities: sorted)
+        }
+
+        // Induced links: both endpoints must be inside the included set.
+        links = investigation.linksArray.filter { l in
+            guard let s = l.source?.id, let t = l.target?.id else { return false }
+            return includedIDs.contains(s) && includedIDs.contains(t)
+        }
+
+        // Timeline: whole investigation for a full report; only events tied to an
+        // included entity when scoped to a subgraph.
+        if options.isSubgraph {
+            events = investigation.eventsArray.filter { ev in
+                if let id = ev.entity?.id { return includedIDs.contains(id) }
+                return false
+            }
+        } else {
+            events = investigation.eventsArray
+        }
+
+        // Chain-of-custody evidence and the plugin audit log are never trimmed.
         evidence = investigation.evidenceArray
         runs = (investigation.pluginRuns ?? []).sorted { $0.startedAt > $1.startedAt }
-        nodePositions = investigation.entitiesArray.map {
+        nodePositions = pool.map {
             (id: $0.id,
              point: CGPoint(x: $0.canvasX, y: $0.canvasY),
              kind: $0.kind, label: $0.label)
         }
     }
 
-    var totalEntities: Int { entityGroups.reduce(0) { $0 + $1.entities.count } }
+    var includedEntities: [Entity] { entityGroups.flatMap { $0.entities } }
+    var totalEntities: Int { includedEntities.count }
+    var discardedCount: Int { includedEntities.reduce(0) { $0 + ($1.discarded ? 1 : 0) } }
+    var averageConfidence: Double {
+        let active = includedEntities.filter { !$0.discarded }
+        guard !active.isEmpty else { return 0 }
+        return active.map(\.confidence).reduce(0, +) / Double(active.count)
+    }
     var hasSampleData: Bool { runs.contains { $0.message.localizedCaseInsensitiveContains("sample") } }
+
+    /// Human-readable description of what this report covers.
+    var scopeLabel: String {
+        var s = options.isSubgraph ? "Selected subgraph" : "Full investigation"
+        if options.includeDiscarded && discardedCount > 0 { s += " · incl. \(discardedCount) discarded" }
+        if options.minConfidence > 0 { s += " · ≥\(Int(options.minConfidence * 100))% confidence" }
+        return s
+    }
 }
 
 // MARK: - Markdown
 
 enum MarkdownReporter {
+    /// Five-cell text meter, e.g. `▓▓▓░░`.
+    static func confidenceBar(_ c: Double) -> String {
+        let filled = max(0, min(5, Int((c * 5).rounded())))
+        return String(repeating: "▓", count: filled) + String(repeating: "░", count: 5 - filled)
+    }
+
     static func render(_ m: ReportModel) -> String {
         let df = DateFormatter(); df.dateStyle = .long; df.timeStyle = .short
         var out = ""
@@ -72,7 +150,10 @@ enum MarkdownReporter {
         if !m.caseNumber.isEmpty { out += "**Case:** \(m.caseNumber)  \n" }
         if !m.classification.isEmpty { out += "**Classification:** \(m.classification)  \n" }
         out += "**Generated:** \(df.string(from: m.generated))  \n"
-        out += "**Scope:** \(m.totalEntities) entities · \(m.links.count) links · \(m.events.count) timeline events\n\n"
+        out += "**Scope:** \(m.scopeLabel)  \n"
+        out += "**Contents:** \(m.totalEntities) entities · \(m.links.count) links · \(m.events.count) timeline events"
+        if m.averageConfidence > 0 { out += " · avg confidence \(Int(m.averageConfidence * 100))%" }
+        out += "\n\n"
         if !m.summary.isEmpty { out += "## Summary\n\n\(m.summary)\n\n" }
         if m.hasSampleData {
             out += "> ⚠️ This report contains **sample** data from un-keyed plugins. Configure API keys for verified results.\n\n"
@@ -82,9 +163,12 @@ enum MarkdownReporter {
         for group in m.entityGroups {
             out += "### \(group.kind.pluralName) (\(group.entities.count))\n\n"
             for e in group.entities {
-                out += "- **\(e.label)**"
+                let name = e.discarded ? "~~\(e.label)~~" : "**\(e.label)**"
+                out += "- \(name)"
                 if !e.subtitle.isEmpty { out += " — \(e.subtitle)" }
-                out += "  _(source: \(e.sourcePlugin.isEmpty ? "manual" : e.sourcePlugin), confidence \(Int(e.confidence * 100))%)_\n"
+                out += "  _(source: \(e.sourcePlugin.isEmpty ? "manual" : e.sourcePlugin), confidence \(confidenceBar(e.confidence)) \(Int(e.confidence * 100))%"
+                if e.discarded { out += ", ⚠︎ discarded" }
+                out += ")_\n"
                 for a in e.attributes { out += "    - \(a.key): \(a.value)\n" }
             }
             out += "\n"
@@ -135,7 +219,10 @@ enum HTMLReporter {
         if !m.caseNumber.isEmpty { body += "Case \(esc(m.caseNumber)) · " }
         if !m.classification.isEmpty { body += "\(esc(m.classification)) · " }
         body += "Generated \(esc(df.string(from: m.generated)))</p>"
-        body += "<p class='scope'>\(m.totalEntities) entities · \(m.links.count) links · \(m.events.count) events</p></header>"
+        body += "<p class='scope'><strong>\(esc(m.scopeLabel))</strong></p>"
+        var scope = "\(m.totalEntities) entities · \(m.links.count) links · \(m.events.count) events"
+        if m.averageConfidence > 0 { scope += " · avg confidence \(Int(m.averageConfidence * 100))%" }
+        body += "<p class='scope'>\(scope)</p></header>"
 
         if m.hasSampleData {
             body += "<div class='warn'>⚠️ Contains sample data from un-keyed plugins. Configure API keys for verified results.</div>"
@@ -148,8 +235,10 @@ enum HTMLReporter {
         for g in m.entityGroups {
             body += "<h3>\(esc(g.kind.pluralName)) (\(g.entities.count))</h3><ul class='entities'>"
             for e in g.entities {
-                body += "<li><span class='dot' style='background:\(g.kind.colorHex)'></span><strong>\(esc(e.label))</strong>"
+                body += "<li class='\(e.discarded ? "discarded" : "")'><span class='dot' style='background:\(g.kind.colorHex)'></span><strong>\(esc(e.label))</strong>"
+                if e.discarded { body += " <span class='badge'>discarded</span>" }
                 if !e.subtitle.isEmpty { body += " — \(esc(e.subtitle))" }
+                body += " <span class='conf' title='\(Int(e.confidence*100))% confidence'><i style='width:\(Int(e.confidence*100))%'></i></span>"
                 body += " <span class='src'>\(esc(e.sourcePlugin.isEmpty ? "manual" : e.sourcePlugin)) · \(Int(e.confidence*100))%</span>"
                 if !e.attributes.isEmpty {
                     body += "<ul class='attrs'>"
@@ -235,6 +324,11 @@ enum HTMLReporter {
     .warn { background: #fff3cd; border: 1px solid #ffe08a; padding: 10px 14px; border-radius: 8px; margin: 16px 0; }
     ul.entities { list-style: none; padding-left: 0; }
     ul.entities > li { padding: 6px 0; border-bottom: 1px solid #eee; }
+    ul.entities > li.discarded { opacity: 0.55; }
+    ul.entities > li.discarded > strong { text-decoration: line-through; }
+    .badge { display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; color: #b42318; background: #fee4e2; border-radius: 4px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; }
+    .conf { display: inline-block; width: 44px; height: 6px; border-radius: 3px; background: #e1e4e8; vertical-align: middle; margin: 0 4px; overflow: hidden; }
+    .conf > i { display: block; height: 100%; background: #21c7bc; }
     .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
     ul.attrs { color: #57606a; font-size: 13px; margin: 4px 0 4px 22px; }
     ul.timeline { list-style: none; padding-left: 0; }
